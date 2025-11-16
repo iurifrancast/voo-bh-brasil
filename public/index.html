@@ -1,154 +1,58 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Busca de Voos - BH → Brasil</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #f6f7fb;
-      margin: 0;
-      padding: 0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-
-    header {
-      background: #4A63E7;
-      color: #fff;
-      width: 100%;
-      padding: 20px;
-      text-align: center;
-      font-size: 1.5rem;
-      font-weight: bold;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
-    }
-
-    .container {
-      margin-top: 30px;
-      background: #fff;
-      padding: 25px;
-      border-radius: 12px;
-      width: 90%;
-      max-width: 450px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-    }
-
-    label {
-      font-weight: bold;
-      display: block;
-      margin-bottom: 6px;
-    }
-
-    input {
-      width: 100%;
-      padding: 12px;
-      margin-bottom: 15px;
-      border: 1px solid #ccc;
-      border-radius: 8px;
-      font-size: 1rem;
-    }
-
-    button {
-      width: 100%;
-      background: #4A63E7;
-      color: white;
-      padding: 14px;
-      border: none;
-      border-radius: 8px;
-      font-size: 1.1rem;
-      cursor: pointer;
-      transition: 0.25s;
-    }
-
-    button:hover {
-      background: #394fd1;
-    }
-
-    .result {
-      margin-top: 30px;
-      width: 90%;
-      max-width: 500px;
-    }
-
-    .card {
-      background: #fff;
-      padding: 20px;
-      margin-bottom: 20px;
-      border-radius: 12px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-
-    .card h3 {
-      margin: 0 0 10px 0;
-      color: #4A63E7;
-    }
-
-    .loading {
-      text-align: center;
-      margin-top: 20px;
-      font-size: 1.2rem;
-      color: #4A63E7;
-      font-weight: bold;
-    }
-
-  </style>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Busca de Voos — Voe Brasil</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
 </head>
+
 <body>
-  <header>Encontre Voos Baratos 👇</header>
+    <header class="topbar">
+        <div class="logo">✈️ Voe Brasil</div>
+    </header>
 
-  <div class="container">
-    <label for="destination">Destino:</label>
-    <input type="text" id="destination" placeholder="Ex: São Paulo, Salvador, Recife...">
-    
-    <label for="date">Data:</label>
-    <input type="date" id="date">
+    <section class="hero">
+        <h1>Encontre voos baratos saindo de Belo Horizonte</h1>
+        <p class="subtitle">Compare preços entre diferentes provedores em segundos.</p>
 
-    <button onclick="searchFlights()">Buscar voos</button>
-  </div>
+        <div class="search-card">
+            <form id="flightSearchForm">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Origem</label>
+                        <input type="text" id="origin" value="CNF" placeholder="Ex: CNF" required>
+                    </div>
 
-  <div id="loading" class="loading" style="display:none;">Buscando voos...</div>
+                    <div class="form-group">
+                        <label>Destino</label>
+                        <input type="text" id="destination" value="GRU" placeholder="Ex: GRU" required>
+                    </div>
+                </div>
 
-  <div id="results" class="result"></div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Data inicial</label>
+                        <input type="date" id="from_date" required>
+                    </div>
 
-  <script>
-    async function searchFlights() {
-      const destination = document.getElementById("destination").value;
-      const date = document.getElementById("date").value;
+                    <div class="form-group">
+                        <label>Data final</label>
+                        <input type="date" id="to_date" required>
+                    </div>
+                </div>
 
-      if (!destination || !date) {
-        alert("Preencha o destino e a data!");
-        return;
-      }
+                <button type="submit" class="btn-search">🔍 Buscar voos</button>
+            </form>
+        </div>
+    </section>
 
-      document.getElementById("loading").style.display = "block";
-      document.getElementById("results").innerHTML = "";
+    <section class="results-section">
+        <h2>Resultados</h2>
+        <div id="resultsContainer" class="results"></div>
+    </section>
 
-      const response = await fetch(`/search?destination=${destination}&date=${date}`);
-      const data = await response.json();
-
-      document.getElementById("loading").style.display = "none";
-
-      if (!data.flights || data.flights.length === 0) {
-        document.getElementById("results").innerHTML = "<p>Nenhum voo encontrado.</p>";
-        return;
-      }
-
-      data.flights.forEach(flight => {
-        const card = `
-          <div class="card">
-            <h3>${flight.airline}</h3>
-            <p><strong>Partida:</strong> ${flight.departure_time}</p>
-            <p><strong>Chegada:</strong> ${flight.arrival_time}</p>
-            <p><strong>Preço:</strong> R$ ${flight.price}</p>
-          </div>
-        `;
-        document.getElementById("results").innerHTML += card;
-      });
-    }
-  </script>
-
+    <script src="app.js"></script>
 </body>
 </html>
