@@ -1,19 +1,50 @@
 import express from "express";
+import path from "path";
+import { fileURLToPath } from "url";
 
+// -----------------------------------------------------
+// CONFIGURAÇÃO DE CAMINHOS (necessário no ES Modules)
+// -----------------------------------------------------
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// -----------------------------------------------------
+// INICIALIZA EXPRESS
+// -----------------------------------------------------
 const app = express();
 app.use(express.json());
 
-// -------------------- CONSTANTES --------------------
-const CACHE_TTL_SEC = Number(process.env.CACHE_TTL_SEC || 300);
+// Servir pasta public (index.html + css + js)
+app.use(express.static(path.join(__dirname, "public")));
+
+// Rota principal (carrega o front)
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+// -----------------------------------------------------
+// CONSTANTES
+// -----------------------------------------------------
+const CACHE_TTL_SEC = Number(process.env.CACHE_TTL_SEC) || 300;
 const DEFAULT_LIMIT = 20;
 
-// -------------------- UTILITÁRIOS --------------------
+// -----------------------------------------------------
+// UTILITÁRIOS
+// -----------------------------------------------------
 const cache = new Map();
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms) => new Promise(res => setTimeout(res, ms));
+
 const log = (...msg) =>
   console.log(`[FlightScan]`, new Date().toISOString(), ...msg);
 
-// -------------------- MOCK DE OFERTAS --------------------
+function safeNumber(num, fallback) {
+  const parsed = Number(num);
+  return isNaN(parsed) ? fallback : parsed;
+}
+
+// -----------------------------------------------------
+// GERADOR DE OFERTAS MOCKADAS
+// -----------------------------------------------------
 let uniqueCounter = 0;
 
 function generateMockOffers(count = 20) {
@@ -38,33 +69,36 @@ function generateMockOffers(count = 20) {
       deep_link: "https://example.com/book",
     });
   }
-
   return offers;
 }
 
-// -------------------- PROVEDORES --------------------
+// -----------------------------------------------------
+// MOCK DOS PROVEDORES
+// -----------------------------------------------------
 async function providerA(params) {
   await sleep(150);
   const o = generateMockOffers(params.limit || 20);
-  o.forEach((x) => (x.source = "PROVIDER_A"));
+  o.forEach(x => x.source = "PROVIDER_A");
   return o;
 }
 
 async function providerB(params) {
   await sleep(250);
   const o = generateMockOffers(params.limit || 20);
-  o.forEach((x) => (x.source = "PROVIDER_B"));
+  o.forEach(x => x.source = "PROVIDER_B");
   return o;
 }
 
 async function providerC(params) {
   await sleep(350);
   const o = generateMockOffers(params.limit || 20);
-  o.forEach((x) => (x.source = "PROVIDER_C"));
+  o.forEach(x => x.source = "PROVIDER_C");
   return o;
 }
 
-// -------------------- NORMALIZAÇÃO --------------------
+// -----------------------------------------------------
+// NORMALIZAÇÃO
+// -----------------------------------------------------
 function normalizeOffer(o) {
   return {
     id: o.unique_id,
@@ -82,19 +116,16 @@ function normalizeOffer(o) {
 
 function uniqueOffers(list) {
   const seen = new Set();
-  const out = [];
-
-  for (const o of list) {
-    if (!seen.has(o.id)) {
-      seen.add(o.id);
-      out.push(o);
-    }
-  }
-
-  return out;
+  return list.filter(o => {
+    if (seen.has(o.id)) return false;
+    seen.add(o.id);
+    return true;
+  });
 }
 
-// -------------------- CACHE --------------------
+// -----------------------------------------------------
+// CACHE
+// -----------------------------------------------------
 async function withCache(cacheKey, fetchFn) {
   const now = Date.now();
 
@@ -107,38 +138,28 @@ async function withCache(cacheKey, fetchFn) {
   }
 
   log(`CACHE MISS → ${cacheKey}`);
-
   const data = await fetchFn();
   cache.set(cacheKey, { timestamp: now, data });
-
   return data;
 }
 
-// -------------------- ROTAS --------------------
-app.get("/", (req, res) => {
-  res.send(`
-    <h1>API FlightScan</h1>
-    <p>Status: Online</p>
-    <p>Use <code>/search</code> para consultar voos.</p>
-  `);
-});
-
+// -----------------------------------------------------
+// ROTA DE BUSCA /search
+// -----------------------------------------------------
 app.get("/search", async (req, res) => {
   try {
-    const {
-      origins = "CNF",
-      from_date = "2026-04-01",
-      to_date = "2026-04-30",
-      page = 1,
-      per_page = DEFAULT_LIMIT,
-    } = req.query;
+    const origins = req.query.origins || "CNF";
+    const from_date = req.query.from_date || "2026-04-01";
+    const to_date = req.query.to_date || "2026-04-30";
+    const page = safeNumber(req.query.page, 1);
+    const per_page = safeNumber(req.query.per_page, DEFAULT_LIMIT);
 
     const cacheKey = JSON.stringify({ origins, from_date, to_date });
 
     const results = await withCache(cacheKey, async () => {
-      log("Fetching from providers…");
-
+      log("Fetching from mock providers…");
       const params = { origins, from_date, to_date, limit: 50 };
+
       const [a, b, c] = await Promise.all([
         providerA(params),
         providerB(params),
@@ -150,18 +171,17 @@ app.get("/search", async (req, res) => {
       const unique = uniqueOffers(normalized);
 
       unique.sort((x, y) => x.total_price - y.total_price);
-
       return unique;
     });
 
     const start = (page - 1) * per_page;
-    const paginated = results.slice(start, start + Number(per_page));
+    const paginated = results.slice(start, start + per_page);
 
     res.json({
       meta: {
         total_results: results.length,
-        page: Number(page),
-        per_page: Number(per_page),
+        page,
+        per_page,
       },
       results: paginated,
     });
@@ -171,7 +191,9 @@ app.get("/search", async (req, res) => {
   }
 });
 
-// -------------------- SERVIDOR --------------------
+// -----------------------------------------------------
+// START SERVER
+// -----------------------------------------------------
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   log(`Server running on port ${PORT}`);
