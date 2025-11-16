@@ -1,200 +1,137 @@
+// app.js
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 
-// -----------------------------------------------------
-// CONFIGURAÇÃO DE CAMINHOS (necessário no ES Modules)
-// -----------------------------------------------------
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// -----------------------------------------------------
-// INICIALIZA EXPRESS
-// -----------------------------------------------------
 const app = express();
 app.use(express.json());
 
-// Servir pasta public (index.html + css + js)
+// servir arquivos estáticos (frontend)
 app.use(express.static(path.join(__dirname, "public")));
 
-// Rota principal (carrega o front)
+// rota raiz (index)
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-// -----------------------------------------------------
-// CONSTANTES
-// -----------------------------------------------------
-const CACHE_TTL_SEC = Number(process.env.CACHE_TTL_SEC) || 300;
-const DEFAULT_LIMIT = 20;
+/**
+ * Configurações fixas
+ * Origem sempre CNF, pesquisa para o Brasil (country_to=BR) cobrindo 2026.
+ */
+const FROM = "CNF";
+const COUNTRY_TO = "BR";
+const DATE_FROM = "01/01/2026";
+const DATE_TO = "31/12/2026";
 
-// -----------------------------------------------------
-// UTILITÁRIOS
-// -----------------------------------------------------
-const cache = new Map();
-const sleep = (ms) => new Promise(res => setTimeout(res, ms));
-
-const log = (...msg) =>
-  console.log(`[FlightScan]`, new Date().toISOString(), ...msg);
-
-function safeNumber(num, fallback) {
-  const parsed = Number(num);
-  return isNaN(parsed) ? fallback : parsed;
-}
-
-// -----------------------------------------------------
-// GERADOR DE OFERTAS MOCKADAS
-// -----------------------------------------------------
-let uniqueCounter = 0;
-
-function generateMockOffers(count = 20) {
-  const offers = [];
-  const airlines = ["Azul", "LATAM", "Gol"];
-  const airports = ["CNF", "GRU", "GIG", "BSB"];
-
-  for (let i = 0; i < count; i++) {
-    const price = Math.floor(Math.random() * 2000) + 300;
-    const tax = Math.floor(price * 0.15);
-
-    offers.push({
-      unique_id: `OFFER-${Date.now()}-${uniqueCounter++}`,
-      source: "MOCK",
-      airline: airlines[Math.floor(Math.random() * airlines.length)],
-      flight_number: `${Math.floor(Math.random() * 900) + 100}`,
-      origin: airports[Math.floor(Math.random() * airports.length)],
-      destination: airports[Math.floor(Math.random() * airports.length)],
-      date: "2026-04-10",
-      total_price: price + tax,
-      price_breakdown: { base: price, tax: tax, currency: "BRL" },
-      deep_link: "https://example.com/book",
-    });
-  }
-  return offers;
-}
-
-// -----------------------------------------------------
-// MOCK DOS PROVEDORES
-// -----------------------------------------------------
-async function providerA(params) {
-  await sleep(150);
-  const o = generateMockOffers(params.limit || 20);
-  o.forEach(x => x.source = "PROVIDER_A");
-  return o;
-}
-
-async function providerB(params) {
-  await sleep(250);
-  const o = generateMockOffers(params.limit || 20);
-  o.forEach(x => x.source = "PROVIDER_B");
-  return o;
-}
-
-async function providerC(params) {
-  await sleep(350);
-  const o = generateMockOffers(params.limit || 20);
-  o.forEach(x => x.source = "PROVIDER_C");
-  return o;
-}
-
-// -----------------------------------------------------
-// NORMALIZAÇÃO
-// -----------------------------------------------------
-function normalizeOffer(o) {
-  return {
-    id: o.unique_id,
-    provider: o.source,
-    airline: o.airline,
-    flight_number: o.flight_number,
-    origin: o.origin,
-    destination: o.destination,
-    date: o.date,
-    total_price: o.total_price,
-    price_breakdown: o.price_breakdown,
-    deep_link: o.deep_link,
-  };
-}
-
-function uniqueOffers(list) {
-  const seen = new Set();
-  return list.filter(o => {
-    if (seen.has(o.id)) return false;
-    seen.add(o.id);
-    return true;
-  });
-}
-
-// -----------------------------------------------------
-// CACHE
-// -----------------------------------------------------
-async function withCache(cacheKey, fetchFn) {
-  const now = Date.now();
-
-  if (cache.has(cacheKey)) {
-    const entry = cache.get(cacheKey);
-    if (now - entry.timestamp < CACHE_TTL_SEC * 1000) {
-      log(`CACHE HIT → ${cacheKey}`);
-      return entry.data;
-    }
-  }
-
-  log(`CACHE MISS → ${cacheKey}`);
-  const data = await fetchFn();
-  cache.set(cacheKey, { timestamp: now, data });
-  return data;
-}
-
-// -----------------------------------------------------
-// ROTA DE BUSCA /search
-// -----------------------------------------------------
-app.get("/search", async (req, res) => {
+/**
+ * GET /voos
+ * Query params opcionais:
+ *  - limit (padrão 200)
+ */
+app.get("/voos", async (req, res) => {
   try {
-    const origins = req.query.origins || "CNF";
-    const from_date = req.query.from_date || "2026-04-01";
-    const to_date = req.query.to_date || "2026-04-30";
-    const page = safeNumber(req.query.page, 1);
-    const per_page = safeNumber(req.query.per_page, DEFAULT_LIMIT);
+    const limit = Math.min(500, Number(req.query.limit) || 200);
 
-    const cacheKey = JSON.stringify({ origins, from_date, to_date });
-
-    const results = await withCache(cacheKey, async () => {
-      log("Fetching from mock providers…");
-      const params = { origins, from_date, to_date, limit: 50 };
-
-      const [a, b, c] = await Promise.all([
-        providerA(params),
-        providerB(params),
-        providerC(params),
-      ]);
-
-      const merged = [...a, ...b, ...c];
-      const normalized = merged.map(normalizeOffer);
-      const unique = uniqueOffers(normalized);
-
-      unique.sort((x, y) => x.total_price - y.total_price);
-      return unique;
+    // Monta URL da Skypicker Public API
+    // Observação: alguns parâmetros variam na API; aqui usamos country_to para buscar destinos no Brasil
+    const base = "https://api.skypicker.com/flights";
+    const params = new URLSearchParams({
+      fly_from: FROM,
+      country_to: COUNTRY_TO,   // todo Brasil
+      date_from: DATE_FROM,
+      date_to: DATE_TO,
+      curr: "BRL",
+      limit: String(limit),
+      partner: "picky",
     });
 
-    const start = (page - 1) * per_page;
-    const paginated = results.slice(start, start + per_page);
+    const url = `${base}?${params.toString()}`;
+    console.log("[Skypicker] fetching:", url);
+
+    // fetch global (Node 18+). Se seu ambiente não suportar, instale node-fetch e adapte.
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      const txt = await resp.text();
+      console.error("Skypicker error:", resp.status, txt);
+      return res.status(502).json({ error: `Skypicker API error ${resp.status}` });
+    }
+
+    const json = await resp.json();
+    if (!json.data || !Array.isArray(json.data)) {
+      return res.status(500).json({ error: "Resposta inesperada da Skypicker" });
+    }
+
+    // Ordena resultados por preço ascendente
+    const data = json.data.slice().sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
+
+    // Mapear para formato limpo
+    const mapped = data.map(item => {
+      // montagem do link de compra: prefere booking_token se houver
+      let link = null;
+      if (item.booking_token) {
+        link = `https://www.kiwi.com/deep?booking_token=${encodeURIComponent(item.booking_token)}`;
+      } else if (item.deep_link) {
+        link = item.deep_link;
+      } else {
+        // fallback para busca kiwi
+        link = `https://www.kiwi.com/pt/search/results/?from=${item.flyFrom}&to=${item.flyTo}&dateFrom=${item.local_departure ? item.local_departure.split("T")[0] : ""}`;
+      }
+
+      return {
+        hash_id: item.id ?? (item.booking_token ? item.booking_token : `${item.flyFrom}:${item.flyTo}:${item.local_departure}`),
+        origin_airport: `${item.cityFrom || ""} (${item.flyFrom || ""})`,
+        destination_airport: `${item.cityTo || ""} (${item.flyTo || ""})`,
+        trip_type: item.return ? "round_trip" : "one_way",
+        departure_date: item.local_departure ? item.local_departure.split("T")[0] : null,
+        return_date: item.local_arrival && item.return ? item.local_arrival.split("T")[0] : null,
+        airline: (item.airlines && item.airlines[0]) || null,
+        flight_numbers: (item.route || []).map(r => `${r.airline || ""}${r.flight_no ? " " + r.flight_no : ""}`),
+        stops: (item.route || []).length - 1,
+        stop_locations: (item.route || []).map(r => r.cityTo).filter(Boolean),
+        is_direct: (item.route || []).length <= 1,
+        duration_minutes: item.duration ? Math.round((item.duration.total||0) / 60) : null,
+        price: item.price ?? null,
+        currency: json.currency || "BRL",
+        price_breakdown: item.price_breakdown || null,
+        search_timestamp: new Date().toISOString(),
+        source: "skypicker_public",
+        sources_alternatives: [],
+        booking_url: link,
+        raw: item
+      };
+    });
+
+    // deduplicação simples por hash_id (mantém a primeira — já ordenado por preço)
+    const seen = new Set();
+    const deduped = [];
+    for (const o of mapped) {
+      if (!seen.has(o.hash_id)) {
+        seen.add(o.hash_id);
+        deduped.push(o);
+      }
+    }
 
     res.json({
       meta: {
-        total_results: results.length,
-        page,
-        per_page,
+        origin_query: [FROM],
+        date_range_searched: ["2026-01-01","2026-12-31"],
+        results_count: deduped.length,
+        sorted_by: "price_asc"
       },
-      results: paginated,
+      results: deduped
     });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Internal error" });
+    console.error("Internal error /voos:", err);
+    res.status(500).json({ error: "Erro interno do servidor" });
   }
 });
 
-// -----------------------------------------------------
-// START SERVER
-// -----------------------------------------------------
+// rota health
+app.get("/health", (req, res) => res.json({ status: "ok", now: new Date().toISOString() }));
+
+// start
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
